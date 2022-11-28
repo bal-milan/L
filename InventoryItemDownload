@@ -1,0 +1,231 @@
+using com.springboard.lib.server;
+using com.springboard.lib.system;
+using com.springboard.lib.wms;
+using com.springboard.lib.wms.accellos;
+using com.springboard.lib.wms.accellos.entities;
+using System;
+using System.Collections.Generic;
+using System.Data;
+
+namespace com.springboard.app.integration.sapwmsinterface
+{
+    public sealed class SAPWMS_InventoryItemsDownload : ITask
+    {
+        public void ExecuteTask(TaskBase taskBase)
+        {
+            try
+            {
+                InterfaceEnvironment interfaceEnvironment = SAPMWS_ConfigurationManager.GetInterfaceEnvironment(taskBase);
+
+                InventoryItemAdapter libraryAdapter = new InventoryItemAdapter(ref interfaceEnvironment, new InventoryItemLib());
+
+                libraryAdapter.Download();
+            }
+            catch (Exception exception)
+            {
+                taskBase.GetLogManager.LogError(FormattingTool.MessageFromException(exception), taskBase.task.id.ToString());
+            }
+        }
+    }
+
+    public sealed class InventoryItemLib : InventoryItemLibBase
+    {
+        #region Download Parsing
+        public override void ParseRecords(string annotation, ref InterfaceEnvironment interfaceEnvironment,
+            ref List<WmsProduct> wmsProductList, ref List<string> validationMessageList,
+            ref Dictionary<string, WmsStagingRecord> wmsStagingRecordDictionary, Dictionary<string, ItemModel> itemsDictionary)
+        {
+            wmsProductList.Clear();
+            if (itemsDictionary != null)
+            {
+                if (itemsDictionary.Count > 0)
+                {
+                    string exceptionMessage = null;
+                    foreach (KeyValuePair<string, ItemModel> element in itemsDictionary)
+                    {
+                        try
+                        {
+                            ParseInventoryItemToWmsProduct(annotation, ref interfaceEnvironment, ref wmsProductList, ref validationMessageList,
+                                ref wmsStagingRecordDictionary, element.Value);
+                        }
+                        catch (Exception exception)
+                        {
+                            exceptionMessage = FormattingTool.MessageFromException(exception);
+                        }
+                    }
+                    if (exceptionMessage != null)
+                        interfaceEnvironment.LogManager.LogError(exceptionMessage, WmsTypes.Item.ToString());
+                }
+            }
+        }
+
+        void ParseInventoryItemToWmsProduct(string annotation, ref InterfaceEnvironment interfaceEnvironment, ref List<WmsProduct> wmsProductList,
+           ref List<string> validationMessageList, ref Dictionary<string, WmsStagingRecord> wmsStagingRecordDictionary, ItemModel itemModel)
+        {
+            string hostID = annotation + itemModel.Item["ItemCode"].ToString();
+            try
+            {
+                validationMessageList.Clear();
+
+                #region Log
+                interfaceEnvironment.WmsAdapter.AddRecordToLogTable(wmsStagingRecordDictionary[hostID], Operation.startParsing);
+                #endregion
+
+                WmsProduct wmsProduct = new WmsProduct();
+                wmsProduct.AddField(WmsFieldEnum.VaFlag, "VA");
+                wmsProduct.AddField(WmsFieldEnum.VaProductCode, hostID);
+                wmsProduct.AddField(WmsFieldEnum.VaVendorProductNumber, itemModel.Item["SuppCatNum"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaDescription, itemModel.Item["ItemName"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaVendorNumber, itemModel.Item["CardCode"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaQuantityAvailable, null);
+                wmsProduct.AddField(WmsFieldEnum.VaOverReceivingPercentage, null);
+                //This requires a value as cost is an number and cannot be null
+                //wmsProduct.AddField(WmsFieldEnum.VaCost, null); 
+                wmsProduct.AddField(WmsFieldEnum.VaRetailPrice, null);
+                wmsProduct.AddField(WmsFieldEnum.VaWholesalePacksize, itemModel.Item["SalPackUn"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaDecimalQuantityPrecision, interfaceEnvironment.sapwmsConfigurationApplication.DecimalQuantityPrecision.ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaDecimalPacksizePrecision, interfaceEnvironment.sapwmsConfigurationApplication.DecimalPacksizePrecision.ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaSupplierType, "1");
+                wmsProduct.AddField(WmsFieldEnum.VaBinLocation, null);
+                wmsProduct.AddField(WmsFieldEnum.VaExpiryDate, null);
+                wmsProduct.AddField(WmsFieldEnum.VaClientName, interfaceEnvironment.ClientName);
+
+                wmsProduct.AddField(WmsFieldEnum.VaHeight, itemModel.Item["BHeight1"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaLength, itemModel.Item["BLength1"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaWidth, itemModel.Item["BWidth1"].ToString());
+
+                if(!string.IsNullOrEmpty(itemModel.Item["BWeight1"].ToString()))
+                {
+                    //Round to 3 decimals as accellos field is 10.3N
+                    wmsProduct.AddField(WmsFieldEnum.VaWeight, Math.Round(Convert.ToDecimal(itemModel.Item["BWeight1"].ToString()), 3).ToString());
+                }
+                wmsProduct.AddField(WmsFieldEnum.VaCubage, itemModel.Item["Bvolume"].ToString());
+
+                #region Size
+                wmsProduct.AddField(WmsFieldEnum.VaSize1, "1");
+                //wmsProduct.AddField(WmsFieldEnum.VaSize2, dataRow["BaseQty"].ToString());
+                //wmsProduct.AddField(WmsFieldEnum.VaSize3, dataRow["BaseQty"].ToString());
+                //wmsProduct.AddField(WmsFieldEnum.VaSize4, dataRow["BaseQty"].ToString());
+                //wmsProduct.AddField(WmsFieldEnum.VaSize5, dataRow["BaseQty"].ToString());
+                #endregion
+
+                wmsProduct.AddField(WmsFieldEnum.VaProductClass, itemModel.Item["ItmsGrpCod"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaBuyer, null);
+                wmsProduct.AddField(WmsFieldEnum.VaMinimumReplenishmentLevel1, null);
+                wmsProduct.AddField(WmsFieldEnum.VaMaximumReplenishmentLevel1, null);
+                wmsProduct.AddField(WmsFieldEnum.VaHandleCode, itemModel.Item["U_BAL_Handle"].ToString());
+                wmsProduct.AddField(WmsFieldEnum.VaCommodityCode, itemModel.Item["U_BAL_Commodity"].ToString());
+ 
+                #region Extra fields
+                wmsProduct.AddField(WmsFieldEnum.VaProductUDF1, null);
+                wmsProduct.AddField(WmsFieldEnum.VaProductUDF2, null);
+                wmsProduct.AddField(WmsFieldEnum.VaProductUDF3, null);
+                wmsProduct.AddField(WmsFieldEnum.VaProductUDF4, null);
+                wmsProduct.AddField(WmsFieldEnum.VaProductUDF5, null);
+                #endregion
+
+                wmsProduct.AddField(WmsFieldEnum.VaPackClass, null);
+
+                WmsTypes itemType = (WmsTypes)interfaceEnvironment.utilityAdapter.GetWmsItemTypeFromSAPType(itemModel.Item["ManSerNum"].ToString(),
+                    itemModel.Item["ManBtchNum"].ToString());
+
+                string attribute1 = "0";
+                string attribute2 = "0";
+                string attribute3 = "0";
+                string attribute4 = "0";
+                string attribute5 = "0";
+                string attribute6 = "0";
+                string attribute7 = "0";
+                string attribute8 = "0";
+                string attribute9 = "0";
+                string attribute10 = "0";
+
+                if (itemModel.Item["U_BAL_ExpiryTracked"].ToString().ToUpper() == "Y")
+                    attribute3 = "1";
+                if (itemType == WmsTypes.LotItem)
+                    attribute2 = "1";
+                if (itemType == WmsTypes.SerialItem)
+                    attribute1 = "2";
+                string attributes = attribute1 + attribute2 + attribute3 + attribute4 + attribute5 + attribute6 + attribute7 + attribute8 + attribute9 + attribute10;
+
+                if (attribute3 == "1")
+                {
+                    wmsProduct.AddField(WmsFieldEnum.VaExpiryDateRequired, "Y");
+                    wmsProduct.AddField(WmsFieldEnum.VaMinimumDaysToExpiry, itemModel.Item["U_BAL_ItemMinDExpr"].ToString());
+                }
+                else
+                {
+                    wmsProduct.AddField(WmsFieldEnum.VaExpiryDateRequired, "N");
+                }
+
+                wmsProduct.AddField(WmsFieldEnum.VaPickAttributeFlags, attributes);
+                wmsProduct.AddField(WmsFieldEnum.VaRecvAttributeFlags, attributes);
+
+                string barcode = itemModel.Item["CodeBars"].ToString();
+                wmsProduct.AddField(WmsFieldEnum.VaUPC, barcode);
+
+                #region Barcode X Ref
+                if (itemModel.BarCodes.Count > 0)
+                {
+                    if (!string.IsNullOrEmpty(barcode))
+                    {
+                        List<WmsBarcodeCrossReference> bxRecordList = new List<WmsBarcodeCrossReference>();
+                        foreach(DataRow barcodeDataRow in itemModel.BarCodes)
+                        {
+                            WmsBarcodeCrossReference bxRecord = new WmsBarcodeCrossReference();
+                            bxRecord.bxFieldList.Add(WmsFieldEnum.BxFlag, "BX");
+                            bxRecord.bxFieldList.Add(WmsFieldEnum.BxProductCode, wmsProduct.productFieldDictionary[WmsFieldEnum.VaProductCode]);
+                            bxRecord.bxFieldList.Add(WmsFieldEnum.BxDescription, barcodeDataRow["BcdName"].ToString());
+                            bxRecord.bxFieldList.Add(WmsFieldEnum.BxForeignBarCode, barcodeDataRow["BcdCode"].ToString());
+                            bxRecord.bxFieldList.Add(WmsFieldEnum.BxPackSize, barcodeDataRow["BaseQty"].ToString());
+                            bxRecord.bxFieldList.Add(WmsFieldEnum.BxExtra1, barcodeDataRow["UomCode"].ToString());
+                            bxRecord.bxFieldList.Add(WmsFieldEnum.BxSCC14, barcodeDataRow["BcdCode"].ToString());
+
+                            if (bxRecord.Validate(ref validationMessageList, interfaceEnvironment))
+                                bxRecordList.Add(bxRecord);
+                        }
+                        wmsProduct.BXs = bxRecordList;
+                    }
+                }
+                #endregion
+
+                //wmsProduct.InternalProcessing(""); //Field is only 30 char
+
+                wmsProduct.Validate(ref validationMessageList, interfaceEnvironment);
+
+                if (validationMessageList.Count == 0)
+                    wmsProductList.Add(wmsProduct);
+
+                //Concatenate validation messages
+                string validationMessage = WmsUtility.ConcatenateValidationMessages(ref validationMessageList);
+
+                if (wmsStagingRecordDictionary.ContainsKey(hostID))
+                {
+                    wmsStagingRecordDictionary[hostID].Message = validationMessage;
+                    StagingUtilities.AddRecordToStagingTable(interfaceEnvironment, wmsStagingRecordDictionary[hostID]);
+
+                    #region Log
+                    //If product name has been changed show that in the log.
+                    interfaceEnvironment.WmsAdapter.AddRecordToLogTable(wmsStagingRecordDictionary[hostID],
+                    hostID != wmsProduct.productFieldDictionary[WmsFieldEnum.VaProductCode] ?
+                    string.Format("{0} [{1}] -> [{2}]", Operation.finishedParsing, hostID, wmsProduct.productFieldDictionary[WmsFieldEnum.VaProductCode])
+                    : Operation.finishedParsing);
+                    #endregion
+                }
+            }
+            catch (Exception exception)
+            {
+                if (wmsStagingRecordDictionary.ContainsKey(hostID))
+                {
+                    wmsStagingRecordDictionary[hostID].Message = exception.Message;
+                    StagingUtilities.AddRecordToStagingTable(interfaceEnvironment, wmsStagingRecordDictionary[hostID]);
+
+                    #region Log
+                    interfaceEnvironment.WmsAdapter.AddRecordToLogTable(wmsStagingRecordDictionary[hostID], Operation.finishedParsing);
+                    #endregion
+                }
+            }
+        }
+        #endregion
+    }
+}
